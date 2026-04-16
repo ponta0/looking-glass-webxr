@@ -10,7 +10,7 @@ const plugins = [
 		preserveExtensions: true,
 	}),
 	typescript({
-		sourceMap: false,
+		sourceMap: true,
 		declaration: true,
 		outDir: "dist",
 	}),
@@ -27,6 +27,7 @@ export default defineConfig(({ mode }) => {
 			publicDir: false,
 			build: {
 				minify: false,
+				sourcemap: true,
 				lib: {
 					entry: resolve(__dirname, "src/LookingGlassWebXRPolyfill.ts"),
 					name: "Looking Glass WebXR",
@@ -36,7 +37,8 @@ export default defineConfig(({ mode }) => {
 				emptyOutDir: false,
 				rollupOptions: {
 					output: {
-						sourcemapExcludeSources: true,
+						sourcemap: true,
+						sourcemapExcludeSources: false,
 						// Provide global variables to use in the UMD build
 						// for externalized deps
 					},

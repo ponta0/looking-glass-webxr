@@ -14,7 +14,6 @@
   },
   "version": "0.6.0",
   "license": "Apache-2.0",
-  "private": false,
   "description": "Official WebXR implementation for Looking Glass Holographic Displays.",
   "repository": {
     "type": "git",

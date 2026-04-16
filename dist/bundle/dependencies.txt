@@ -6,7 +6,7 @@ Description: Use the WebXR Device API today, providing fallbacks to native WebVR
 Repository: git+https://github.com/immersive-web/webxr-polyfill.git
 Homepage: https://github.com/immersive-web/webxr-polyfill
 Author: Looking Glass Factory
-License Copyright:
+License Text:
 ===
 
 
@@ -224,7 +224,7 @@ Homepage: http://glmatrix.net
 Contributors:
   Brandon Jones <tojiro@gmail.com>
   Colin MacKenzie IV <sinisterchipmunk@gmail.com>
-License Copyright:
+License Text:
 ===
 
 Copyright (c) 2015-2018, Brandon Jones, Colin MacKenzie IV.
@@ -256,7 +256,7 @@ Private: false
 Description: A Cardboard VR implementation of a WebVR 1.1 VRDisplay for polyfilling the WebVR API
 Repository: undefined
 Homepage: https://github.com/immersive-web/cardboard-vr-display
-License Copyright:
+License Text:
 ===
 
 
@@ -470,7 +470,7 @@ License: SEE LICENSE IN LICENSE.txt
 Private: false
 Description: A library that works with Looking Glass HoloPlay Service
 Author: Looking Glass Factory
-License Copyright:
+License Text:
 ===
 
 Looking Glass Factory Inc.

@@ -8727,3 +8727,4 @@ host this content on a secure origin for the best user experience.
   exports2.LookingGlassWebXRPolyfill = LookingGlassWebXRPolyfill;
   Object.defineProperties(exports2, { __esModule: { value: true }, [Symbol.toStringTag]: { value: "Module" } });
 });
+//# sourceMappingURL=webxr.umd.cjs.map
