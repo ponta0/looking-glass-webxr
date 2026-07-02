@@ -15,8 +15,8 @@
  */
 
 import XRWebGLLayer, { PRIVATE as XRWebGLLayer_PRIVATE } from "@lookingglass/webxr-polyfill/src/api/XRWebGLLayer"
-import { Shader } from "holoplay-core"
 import { getLookingGlassConfig } from "./LookingGlassConfig"
+import { createLenticularShaderSource, MAX_SUBPIXEL_CELLS } from "./LenticularShader"
 import { moveCanvasToWindow } from "./LookingGlassWindow"
 
 export const PRIVATE = Symbol("LookingGlassXRWebGLLayer")
@@ -112,7 +112,7 @@ export default class LookingGlassXRWebGLLayer extends XRWebGLLayer {
 
 		{
 			const vsSource = `#version 300 es
-			in vec2 a_position;
+			layout(location = 0) in vec2 a_position;
 			out vec2 v_texcoord;
 			void main() {
 			  gl_Position = vec4(a_position * 2.0 - 1.0, 0.0, 1.0);
@@ -125,11 +125,11 @@ export default class LookingGlassXRWebGLLayer extends XRWebGLLayer {
 		}
 
 		let lastGeneratedFSSource
-		let a_location
+		let a_location = 0
 		let u_viewType
 
 		const recompileProgram = () => {
-			const fsSource = Shader(cfg)
+			const fsSource = createLenticularShaderSource(cfg)
 
 			if (fsSource === lastGeneratedFSSource) return
 			lastGeneratedFSSource = fsSource
@@ -159,16 +159,21 @@ export default class LookingGlassXRWebGLLayer extends XRWebGLLayer {
 			u_viewType = gl.getUniformLocation(program, "u_viewType")
 			const u_texture = gl.getUniformLocation(program, "u_texture")
 			const u_subpixelCells = gl.getUniformLocation(program, "subpixelData")
+			const subpixelCells = cfg.subpixelCells
+			const maxSubpixelFloats = MAX_SUBPIXEL_CELLS * 6
+			const subpixelUniformData = new Float32Array(maxSubpixelFloats)
+			subpixelUniformData.set(subpixelCells.length > maxSubpixelFloats ? subpixelCells.slice(0, maxSubpixelFloats) : subpixelCells)
 
 			const oldProgram = gl.getParameter(gl.CURRENT_PROGRAM)
 			{
 				gl.useProgram(program)
 				gl.uniform1i(u_texture, 0) // Always use texture unit 0 for u_texture
-				gl.uniform1fv(u_subpixelCells, cfg.subpixelCells)
+				gl.uniform1fv(u_subpixelCells, subpixelUniformData)
 			}
 			gl.useProgram(oldProgram)
 		}
 		cfg.addEventListener("on-config-changed", recompileProgram)
+		recompileProgram()
 
 		const vao = OES_VAO ? OES_VAO.createVertexArrayOES() : gl.createVertexArray()
 		const vbo = gl.createBuffer()

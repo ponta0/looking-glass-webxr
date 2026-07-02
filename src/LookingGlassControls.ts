@@ -213,7 +213,7 @@ export function initLookingGlassControlGUI() {
 			{
 				label: "view filtering mode",
 				title: "controls the method used for view blending",
-				fixRange: (v) => Math.max(0, Math.min(v, 2)),
+				fixRange: (v) => Math.max(0, Math.min(v, 3)),
 				stringify: (v) => (v === 0 ? "old, studio style" : v === 1 ? "2 view" : v === 2 ? "gaussian" : v === 3 ? "10 view gaussian": "?"),
 			}
 		)

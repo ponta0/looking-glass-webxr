@@ -164,6 +164,13 @@ export type ViewControlArgs = {
 	filterMode: number
 	/**gaussian sigma */
 	gaussianSigma: number
+	/** Horizontal focus shift applied during lenticular sampling. Matches Bridge's focus parameter before it is multiplied by quilt columns. */
+	focus: number
+	/** Enables edge dimming across the view cone. */
+	viewDimming: boolean
+	filterEnd: number
+	filterSize: number
+	edgeThreshold: number
 }
 
 type LookingGlassConfigEvent = "on-config-changed"
@@ -210,9 +217,14 @@ export class LookingGlassConfig extends EventTarget {
 		XRSession: null,
 		lkgCanvas: null,
 		appCanvas: null,
-		subpixelMode: 1.0,
-		filterMode: 1,
+		subpixelMode: 0.0,
+		filterMode: 2,
 		gaussianSigma: 0.01,
+		focus: 0,
+		viewDimming: false,
+		filterEnd: 0.05,
+		filterSize: 0.15,
+		edgeThreshold: 0.01,
 	}
 	LookingGlassDetected: any
 
@@ -256,6 +268,12 @@ export class LookingGlassConfig extends EventTarget {
 			...this._calibration,
 			...value,
 		}
+
+		const cellPatternMode = this._calibration.CellPatternMode?.value
+		if (typeof cellPatternMode === "number" && Number.isFinite(cellPatternMode)) {
+			this._viewControls.subpixelMode = Math.round(cellPatternMode)
+		}
+
 		this.onConfigChange()
 	}
 
@@ -462,6 +480,46 @@ export class LookingGlassConfig extends EventTarget {
 		this.updateViewControls({ gaussianSigma: v })
 	}
 
+	get focus() {
+		return this._viewControls.focus
+	}
+
+	set focus(v) {
+		this.updateViewControls({ focus: v })
+	}
+
+	get viewDimming() {
+		return this._viewControls.viewDimming
+	}
+
+	set viewDimming(v) {
+		this.updateViewControls({ viewDimming: v })
+	}
+
+	get filterEnd() {
+		return this._viewControls.filterEnd
+	}
+
+	set filterEnd(v) {
+		this.updateViewControls({ filterEnd: v })
+	}
+
+	get filterSize() {
+		return this._viewControls.filterSize
+	}
+
+	set filterSize(v) {
+		this.updateViewControls({ filterSize: v })
+	}
+
+	get edgeThreshold() {
+		return this._viewControls.edgeThreshold
+	}
+
+	set edgeThreshold(v) {
+		this.updateViewControls({ edgeThreshold: v })
+	}
+
 	get popup() {
 		return this._viewControls.popup
 	}
@@ -627,24 +685,23 @@ export class LookingGlassConfig extends EventTarget {
 		)
 	}
 
+	public get center() {
+		const portraitCenterOffset = this._calibration.screenW.value < this._calibration.screenH.value ? 0.5 : 0
+		const flipCenterOffset = this._calibration.flipImageX.value ? 0.5 : 0
+
+		return this._calibration.center.value + portraitCenterOffset + flipCenterOffset
+	}
+
 	public get subpixelCells() {
 		const subPixelCells = new Float32Array(6 * this._calibration.subpixelCells.length)
 
 		this._calibration.subpixelCells.forEach((cell, index) => {
-			cell.ROffsetX /= this.calibration.screenW.value
-			cell.ROffsetY /= this.calibration.screenH.value
-			cell.GOffsetX /= this.calibration.screenW.value
-			cell.GOffsetY /= this.calibration.screenH.value
-			cell.BOffsetX /= this.calibration.screenW.value
-			cell.BOffsetY /= this.calibration.screenH.value
-
-			// Populate the subPixelCells Float32Array
-			subPixelCells[index * 6 + 0] = cell.ROffsetX
-			subPixelCells[index * 6 + 1] = cell.ROffsetY
-			subPixelCells[index * 6 + 2] = cell.GOffsetX
-			subPixelCells[index * 6 + 3] = cell.GOffsetY
-			subPixelCells[index * 6 + 4] = cell.BOffsetX
-			subPixelCells[index * 6 + 5] = cell.BOffsetY
+			subPixelCells[index * 6 + 0] = cell.ROffsetX / this.calibration.screenW.value
+			subPixelCells[index * 6 + 1] = cell.ROffsetY / this.calibration.screenH.value
+			subPixelCells[index * 6 + 2] = cell.GOffsetX / this.calibration.screenW.value
+			subPixelCells[index * 6 + 3] = cell.GOffsetY / this.calibration.screenH.value
+			subPixelCells[index * 6 + 4] = cell.BOffsetX / this.calibration.screenW.value
+			subPixelCells[index * 6 + 5] = cell.BOffsetY / this.calibration.screenH.value
 		})
 
 		return subPixelCells
