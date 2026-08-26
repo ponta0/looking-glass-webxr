@@ -166,7 +166,7 @@ export type ViewControlArgs = {
 	gaussianSigma: number
 	/** Horizontal focus shift applied during lenticular sampling. Matches Bridge's focus parameter before it is multiplied by quilt columns. */
 	focus: number
-	/** Enables edge dimming across the view cone. */
+	/** Enables edge dimming across the view cone. Opt-in in WebXR to preserve its legacy output; Bridge enables this for most displays. */
 	viewDimming: boolean
 	filterEnd: number
 	filterSize: number
@@ -176,6 +176,8 @@ export type ViewControlArgs = {
 type LookingGlassConfigEvent = "on-config-changed"
 
 export class LookingGlassConfig extends EventTarget {
+	private _subpixelModeOverridden = false
+
 	// Calibration defaults
 	private _calibration: CalibrationArgs = {
 		configVersion: "1.0",
@@ -230,7 +232,12 @@ export class LookingGlassConfig extends EventTarget {
 
 	constructor(cfg?: Partial<ViewControlArgs>) {
 		super()
-		this._viewControls = { ...this._viewControls, ...cfg }
+		this._subpixelModeOverridden = cfg?.subpixelMode !== undefined
+		const normalizedConfig = { ...cfg }
+		if (normalizedConfig.subpixelMode === undefined) {
+			delete normalizedConfig.subpixelMode
+		}
+		this._viewControls = { ...this._viewControls, ...normalizedConfig }
 		this.syncCalibration()
 	}
 
@@ -270,7 +277,7 @@ export class LookingGlassConfig extends EventTarget {
 		}
 
 		const cellPatternMode = this._calibration.CellPatternMode?.value
-		if (typeof cellPatternMode === "number" && Number.isFinite(cellPatternMode)) {
+		if (!this._subpixelModeOverridden && typeof cellPatternMode === "number" && Number.isFinite(cellPatternMode)) {
 			this._viewControls.subpixelMode = Math.round(cellPatternMode)
 		}
 
@@ -279,9 +286,15 @@ export class LookingGlassConfig extends EventTarget {
 
 	public updateViewControls(value: Partial<ViewControlArgs> | undefined) {
 		if (value != undefined) {
+			const normalizedValue = { ...value }
+			if (value.subpixelMode !== undefined) {
+				this._subpixelModeOverridden = true
+			} else {
+				delete normalizedValue.subpixelMode
+			}
 			this._viewControls = {
 				...this._viewControls,
-				...value,
+				...normalizedValue,
 			}
 			this.onConfigChange()
 		}
@@ -686,10 +699,11 @@ export class LookingGlassConfig extends EventTarget {
 	}
 
 	public get center() {
-		const portraitCenterOffset = this._calibration.screenW.value < this._calibration.screenH.value ? 0.5 : 0
+		// Match LookingGlassBridge Calibration::initUniforms exactly: Bridge
+		// applies a half-period phase correction only for horizontal flips.
 		const flipCenterOffset = this._calibration.flipImageX.value ? 0.5 : 0
 
-		return this._calibration.center.value + portraitCenterOffset + flipCenterOffset
+		return this._calibration.center.value + flipCenterOffset
 	}
 
 	public get subpixelCells() {

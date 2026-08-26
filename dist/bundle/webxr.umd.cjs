@@ -6753,6 +6753,7 @@ host this content on a secure origin for the best user experience.
   class LookingGlassConfig$1 extends EventTarget {
     constructor(cfg) {
       super();
+      __publicField(this, "_subpixelModeOverridden", false);
       __publicField(this, "_calibration", {
         configVersion: "1.0",
         pitch: { value: 45 },
@@ -6801,7 +6802,12 @@ host this content on a secure origin for the best user experience.
         edgeThreshold: 0.01
       });
       __publicField(this, "LookingGlassDetected");
-      this._viewControls = { ...this._viewControls, ...cfg };
+      this._subpixelModeOverridden = (cfg == null ? void 0 : cfg.subpixelMode) !== void 0;
+      const normalizedConfig = { ...cfg };
+      if (normalizedConfig.subpixelMode === void 0) {
+        delete normalizedConfig.subpixelMode;
+      }
+      this._viewControls = { ...this._viewControls, ...normalizedConfig };
       this.syncCalibration();
     }
     syncCalibration() {
@@ -6832,16 +6838,22 @@ host this content on a secure origin for the best user experience.
         ...value
       };
       const cellPatternMode = (_a = this._calibration.CellPatternMode) == null ? void 0 : _a.value;
-      if (typeof cellPatternMode === "number" && Number.isFinite(cellPatternMode)) {
+      if (!this._subpixelModeOverridden && typeof cellPatternMode === "number" && Number.isFinite(cellPatternMode)) {
         this._viewControls.subpixelMode = Math.round(cellPatternMode);
       }
       this.onConfigChange();
     }
     updateViewControls(value) {
       if (value != void 0) {
+        const normalizedValue = { ...value };
+        if (value.subpixelMode !== void 0) {
+          this._subpixelModeOverridden = true;
+        } else {
+          delete normalizedValue.subpixelMode;
+        }
         this._viewControls = {
           ...this._viewControls,
-          ...value
+          ...normalizedValue
         };
         this.onConfigChange();
       }
@@ -7133,9 +7145,8 @@ host this content on a secure origin for the best user experience.
       return this._calibration.pitch.value * this._calibration.screenW.value / this._calibration.DPI.value * Math.cos(Math.atan(1 / this._calibration.slope.value));
     }
     get center() {
-      const portraitCenterOffset = this._calibration.screenW.value < this._calibration.screenH.value ? 0.5 : 0;
       const flipCenterOffset = this._calibration.flipImageX.value ? 0.5 : 0;
-      return this._calibration.center.value + portraitCenterOffset + flipCenterOffset;
+      return this._calibration.center.value + flipCenterOffset;
     }
     get subpixelCells() {
       const subPixelCells = new Float32Array(6 * this._calibration.subpixelCells.length);
@@ -7421,6 +7432,14 @@ host this content on a secure origin for the best user experience.
     const safeSubpixelCellCount = Math.max(subpixelCellCount, 1);
     const filterMode = clamp(Math.round(cfg.filterMode), 0, 3);
     const centerViewIndex = Math.floor(tileCount / 2);
+    const rawFilterEnd = Number.isFinite(cfg.filterEnd) ? cfg.filterEnd : 0.05;
+    const filterEnd = clamp(rawFilterEnd, 0, 0.499999);
+    const rawFilterSize = Number.isFinite(cfg.filterSize) ? cfg.filterSize : 0.15;
+    const filterSize = clamp(rawFilterSize, 1e-6, Math.max(1e-6, 0.5 - filterEnd));
+    const rawGaussianSigma = Number.isFinite(cfg.gaussianSigma) ? cfg.gaussianSigma : 0.01;
+    const gaussianSigma = Math.max(Math.abs(rawGaussianSigma), 1e-6);
+    const rawEdgeThreshold = Number.isFinite(cfg.edgeThreshold) ? cfg.edgeThreshold : 0.01;
+    const edgeThreshold = Math.max(rawEdgeThreshold, 1e-6);
     return `#version 300 es
 precision highp float;
 
@@ -7447,13 +7466,15 @@ const int safeSubpixelCellCount = ${glslInt(safeSubpixelCellCount)};
 const int filter_mode = ${glslInt(filterMode)};
 const int cellPatternType = ${glslInt(cfg.subpixelMode)};
 const int filter_edge = ${cfg.viewDimming ? 1 : 0};
-const float filter_end = ${glslFloat(cfg.filterEnd)};
-const float filter_size = ${glslFloat(cfg.filterSize)};
-const float gaussian_sigma = ${glslFloat(Math.max(cfg.gaussianSigma, 1e-6))};
-const float edgeThreshold = ${glslFloat(Math.max(cfg.edgeThreshold, 1e-6))};
+const float filter_end = ${glslFloat(filterEnd)};
+const float filter_size = ${glslFloat(filterSize)};
+const float gaussian_sigma = ${glslFloat(gaussianSigma)};
+const float edgeThreshold = ${glslFloat(edgeThreshold)};
 
 int GetCellForPixel(vec2 screen_uv)
 {
+	// Keep these modes synchronized with LookingGlassBridge's
+	// tools/glsl_converter/lent_lent.glsl cell-pattern mappings.
 	int xPos = int(screen_uv.x * screenW);
 	int yPos = int(screen_uv.y * screenH);
 	int cell = 0;
@@ -7534,11 +7555,9 @@ vec2 GetQuiltCoordinates(vec2 tile_uv, int viewIndex)
 
 	float quiltCoordU = ((tileXIndex + tile_uv.x) / tx) * viewPortion.x;
 	float quiltCoordV = ((tileYIndex + tile_uv.y) / tile.y) * viewPortion.y;
-	vec2 quilt_uv = vec2(quiltCoordU, quiltCoordV);
-
-	quilt_uv.y = 1.0 - quilt_uv.y;
-
-	return quilt_uv;
+	// The WebXR quilt is rendered into a WebGL framebuffer, so its texture
+	// coordinates already use the bottom-left origin expected by sampling.
+	return vec2(quiltCoordU, quiltCoordV);
 }
 
 vec4 GetViewsColors(vec2 tile_uv, vec3 views)
@@ -7602,17 +7621,16 @@ vec4 GaussianViewFiltering(vec2 tile_uv, vec3 views)
 	vec3 leftWeight = exp(-leftDiff * leftDiff / multiplier);
 	vec3 rightWeight = exp(-rightDiff * rightDiff / multiplier);
 	vec3 totalWeight = centerWeight + leftWeight + rightWeight;
-
-	centerWeight /= totalWeight;
-	leftWeight /= totalWeight;
-	rightWeight /= totalWeight;
-
-	return vec4(
+	const vec3 minWeight = vec3(1e-20);
+	vec3 validWeight = step(minWeight, totalWeight);
+	vec3 weightedColor = vec3(
 		centerColor.r * centerWeight.x + leftColor.r * leftWeight.x + rightColor.r * rightWeight.x,
 		centerColor.g * centerWeight.y + leftColor.g * leftWeight.y + rightColor.g * rightWeight.y,
-		centerColor.b * centerWeight.z + leftColor.b * leftWeight.z + rightColor.b * rightWeight.z,
-		1.0
+		centerColor.b * centerWeight.z + leftColor.b * leftWeight.z + rightColor.b * rightWeight.z
 	);
+	vec3 blendedColor = weightedColor / max(totalWeight, minWeight);
+
+	return vec4(mix(centerColor.rgb, blendedColor, validWeight), 1.0);
 }
 
 vec3 ComputeGaussianWeight(vec3 targetViews, vec3 sampledViews)
@@ -7627,6 +7645,7 @@ vec4 NRISViewFiltering(vec2 tile_uv, vec3 views, int n)
 	float viewSpaceTileSize = 1.0 / tileCount;
 	vec4 outputColor = vec4(0.0);
 	vec3 totalWeight = vec3(0.0);
+	vec3 nearestColor = vec3(0.0);
 
 	for(int i = -n; i <= n; i++)
 	{
@@ -7638,9 +7657,15 @@ vec4 NRISViewFiltering(vec2 tile_uv, vec3 views, int n)
 
 		outputColor.rgb += sampleColor.rgb * weight;
 		totalWeight += weight;
+		if(i == 0)
+		{
+			nearestColor = sampleColor.rgb;
+		}
 	}
 
-	outputColor.rgb /= totalWeight;
+	const vec3 minWeight = vec3(1e-20);
+	vec3 validWeight = step(minWeight, totalWeight);
+	outputColor.rgb = mix(nearestColor, outputColor.rgb / max(totalWeight, minWeight), validWeight);
 	outputColor.a = 1.0;
 
 	return outputColor;
@@ -7648,23 +7673,13 @@ vec4 NRISViewFiltering(vec2 tile_uv, vec3 views, int n)
 
 vec3 ViewDimming(vec3 views)
 {
-	float fadeStart1 = filter_end;
 	float fadeEnd1 = filter_end + filter_size;
-	float fullColorEnd = 1.0 - (filter_end + filter_size);
+	float fullColorEnd = 1.0 - fadeEnd1;
 	float fadeEnd2 = 1.0 - filter_end;
 
-	vec3 lowerDim = smoothstep(0.0, fadeStart1, views);
-	vec3 fadeDim1 = smoothstep(fadeStart1, fadeEnd1, views);
-	vec3 dimValues = mix(vec3(0.0), lowerDim, fadeDim1);
-
-	vec3 upperDim = smoothstep(1.0, fadeEnd2, views);
-	vec3 fadeDim2 = smoothstep(fullColorEnd, fadeEnd2, views);
-	dimValues = mix(dimValues, upperDim, fadeDim2);
-
-	vec3 fullColorDim = smoothstep(fadeEnd1, fullColorEnd, views);
-	dimValues = mix(dimValues, vec3(1.0), fullColorDim);
-
-	return dimValues;
+	vec3 lowerFade = smoothstep(filter_end, fadeEnd1, views);
+	vec3 upperFade = vec3(1.0) - smoothstep(fullColorEnd, fadeEnd2, views);
+	return min(lowerFade, upperFade);
 }
 
 float CalculateEdgeFade(vec2 tile_uv)
@@ -7958,12 +7973,12 @@ void main()
         label: "view filtering mode",
         title: "controls the method used for view blending",
         fixRange: (v) => Math.max(0, Math.min(v, 3)),
-        stringify: (v) => v === 0 ? "old, studio style" : v === 1 ? "2 view" : v === 2 ? "gaussian" : v === 3 ? "10 view gaussian" : "?"
+        stringify: (v) => v === 0 ? "old, studio style" : v === 1 ? "2 view" : v === 2 ? "gaussian" : v === 3 ? "21-view gaussian (expensive)" : "?"
       });
-      addControl("gaussianSigma", { type: "range", min: -1, max: 1, step: 0.01 }, {
+      addControl("gaussianSigma", { type: "range", min: 1e-3, max: 1, step: 0.01 }, {
         label: "gaussian sigma",
         title: "control view blending",
-        fixRange: (v) => Math.max(-1, Math.min(v, 1)),
+        fixRange: (v) => Math.max(1e-3, Math.min(v, 1)),
         stringify: (v) => v
       });
       cfg.lkgCanvas.oncontextmenu = (ev) => {
@@ -8213,6 +8228,8 @@ void main()
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, cfg.framebufferWidth, cfg.framebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_BASE_LEVEL, 0);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, 0);
         }
@@ -8275,32 +8292,28 @@ void main()
       let lastGeneratedFSSource;
       let a_location = 0;
       let u_viewType;
+      let u_texture = null;
+      let u_subpixelCells = null;
       const recompileProgram = () => {
         const fsSource = createLenticularShaderSource(cfg);
-        if (fsSource === lastGeneratedFSSource)
-          return;
-        lastGeneratedFSSource = fsSource;
-        if (!fs) {
-          return;
+        if (fsSource !== lastGeneratedFSSource) {
+          gl.shaderSource(fs, fsSource);
+          gl.compileShader(fs);
+          if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+            console.warn(gl.getShaderInfoLog(fs));
+            return;
+          }
+          gl.linkProgram(program);
+          if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.warn(gl.getProgramInfoLog(program));
+            return;
+          }
+          lastGeneratedFSSource = fsSource;
+          a_location = gl.getAttribLocation(program, "a_position");
+          u_viewType = gl.getUniformLocation(program, "u_viewType");
+          u_texture = gl.getUniformLocation(program, "u_texture");
+          u_subpixelCells = gl.getUniformLocation(program, "subpixelData");
         }
-        gl.shaderSource(fs, fsSource);
-        gl.compileShader(fs);
-        if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
-          console.warn(gl.getShaderInfoLog(fs));
-          return;
-        }
-        if (!program) {
-          return;
-        }
-        gl.linkProgram(program);
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-          console.warn(gl.getProgramInfoLog(program));
-          return;
-        }
-        a_location = gl.getAttribLocation(program, "a_position");
-        u_viewType = gl.getUniformLocation(program, "u_viewType");
-        const u_texture = gl.getUniformLocation(program, "u_texture");
-        const u_subpixelCells = gl.getUniformLocation(program, "subpixelData");
         const subpixelCells = cfg.subpixelCells;
         const maxSubpixelFloats = MAX_SUBPIXEL_CELLS * 6;
         const subpixelUniformData = new Float32Array(maxSubpixelFloats);

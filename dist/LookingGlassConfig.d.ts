@@ -159,7 +159,7 @@ export declare type ViewControlArgs = {
     gaussianSigma: number;
     /** Horizontal focus shift applied during lenticular sampling. Matches Bridge's focus parameter before it is multiplied by quilt columns. */
     focus: number;
-    /** Enables edge dimming across the view cone. */
+    /** Enables edge dimming across the view cone. Opt-in in WebXR to preserve its legacy output; Bridge enables this for most displays. */
     viewDimming: boolean;
     filterEnd: number;
     filterSize: number;
@@ -167,6 +167,7 @@ export declare type ViewControlArgs = {
 };
 declare type LookingGlassConfigEvent = "on-config-changed";
 export declare class LookingGlassConfig extends EventTarget {
+    private _subpixelModeOverridden;
     private _calibration;
     private _viewControls;
     LookingGlassDetected: any;

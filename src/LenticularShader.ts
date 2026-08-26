@@ -33,6 +33,14 @@ export function createLenticularShaderSource(cfg: LookingGlassConfig) {
 	const safeSubpixelCellCount = Math.max(subpixelCellCount, 1)
 	const filterMode = clamp(Math.round(cfg.filterMode), 0, 3)
 	const centerViewIndex = Math.floor(tileCount / 2)
+	const rawFilterEnd = Number.isFinite(cfg.filterEnd) ? cfg.filterEnd : 0.05
+	const filterEnd = clamp(rawFilterEnd, 0, 0.499999)
+	const rawFilterSize = Number.isFinite(cfg.filterSize) ? cfg.filterSize : 0.15
+	const filterSize = clamp(rawFilterSize, 0.000001, Math.max(0.000001, 0.5 - filterEnd))
+	const rawGaussianSigma = Number.isFinite(cfg.gaussianSigma) ? cfg.gaussianSigma : 0.01
+	const gaussianSigma = Math.max(Math.abs(rawGaussianSigma), 0.000001)
+	const rawEdgeThreshold = Number.isFinite(cfg.edgeThreshold) ? cfg.edgeThreshold : 0.01
+	const edgeThreshold = Math.max(rawEdgeThreshold, 0.000001)
 
 	return `#version 300 es
 precision highp float;
@@ -60,13 +68,15 @@ const int safeSubpixelCellCount = ${glslInt(safeSubpixelCellCount)};
 const int filter_mode = ${glslInt(filterMode)};
 const int cellPatternType = ${glslInt(cfg.subpixelMode)};
 const int filter_edge = ${cfg.viewDimming ? 1 : 0};
-const float filter_end = ${glslFloat(cfg.filterEnd)};
-const float filter_size = ${glslFloat(cfg.filterSize)};
-const float gaussian_sigma = ${glslFloat(Math.max(cfg.gaussianSigma, 0.000001))};
-const float edgeThreshold = ${glslFloat(Math.max(cfg.edgeThreshold, 0.000001))};
+const float filter_end = ${glslFloat(filterEnd)};
+const float filter_size = ${glslFloat(filterSize)};
+const float gaussian_sigma = ${glslFloat(gaussianSigma)};
+const float edgeThreshold = ${glslFloat(edgeThreshold)};
 
 int GetCellForPixel(vec2 screen_uv)
 {
+	// Keep these modes synchronized with LookingGlassBridge's
+	// tools/glsl_converter/lent_lent.glsl cell-pattern mappings.
 	int xPos = int(screen_uv.x * screenW);
 	int yPos = int(screen_uv.y * screenH);
 	int cell = 0;
@@ -147,11 +157,9 @@ vec2 GetQuiltCoordinates(vec2 tile_uv, int viewIndex)
 
 	float quiltCoordU = ((tileXIndex + tile_uv.x) / tx) * viewPortion.x;
 	float quiltCoordV = ((tileYIndex + tile_uv.y) / tile.y) * viewPortion.y;
-	vec2 quilt_uv = vec2(quiltCoordU, quiltCoordV);
-
-	quilt_uv.y = 1.0 - quilt_uv.y;
-
-	return quilt_uv;
+	// The WebXR quilt is rendered into a WebGL framebuffer, so its texture
+	// coordinates already use the bottom-left origin expected by sampling.
+	return vec2(quiltCoordU, quiltCoordV);
 }
 
 vec4 GetViewsColors(vec2 tile_uv, vec3 views)
@@ -215,17 +223,16 @@ vec4 GaussianViewFiltering(vec2 tile_uv, vec3 views)
 	vec3 leftWeight = exp(-leftDiff * leftDiff / multiplier);
 	vec3 rightWeight = exp(-rightDiff * rightDiff / multiplier);
 	vec3 totalWeight = centerWeight + leftWeight + rightWeight;
-
-	centerWeight /= totalWeight;
-	leftWeight /= totalWeight;
-	rightWeight /= totalWeight;
-
-	return vec4(
+	const vec3 minWeight = vec3(1e-20);
+	vec3 validWeight = step(minWeight, totalWeight);
+	vec3 weightedColor = vec3(
 		centerColor.r * centerWeight.x + leftColor.r * leftWeight.x + rightColor.r * rightWeight.x,
 		centerColor.g * centerWeight.y + leftColor.g * leftWeight.y + rightColor.g * rightWeight.y,
-		centerColor.b * centerWeight.z + leftColor.b * leftWeight.z + rightColor.b * rightWeight.z,
-		1.0
+		centerColor.b * centerWeight.z + leftColor.b * leftWeight.z + rightColor.b * rightWeight.z
 	);
+	vec3 blendedColor = weightedColor / max(totalWeight, minWeight);
+
+	return vec4(mix(centerColor.rgb, blendedColor, validWeight), 1.0);
 }
 
 vec3 ComputeGaussianWeight(vec3 targetViews, vec3 sampledViews)
@@ -240,6 +247,7 @@ vec4 NRISViewFiltering(vec2 tile_uv, vec3 views, int n)
 	float viewSpaceTileSize = 1.0 / tileCount;
 	vec4 outputColor = vec4(0.0);
 	vec3 totalWeight = vec3(0.0);
+	vec3 nearestColor = vec3(0.0);
 
 	for(int i = -n; i <= n; i++)
 	{
@@ -251,9 +259,15 @@ vec4 NRISViewFiltering(vec2 tile_uv, vec3 views, int n)
 
 		outputColor.rgb += sampleColor.rgb * weight;
 		totalWeight += weight;
+		if(i == 0)
+		{
+			nearestColor = sampleColor.rgb;
+		}
 	}
 
-	outputColor.rgb /= totalWeight;
+	const vec3 minWeight = vec3(1e-20);
+	vec3 validWeight = step(minWeight, totalWeight);
+	outputColor.rgb = mix(nearestColor, outputColor.rgb / max(totalWeight, minWeight), validWeight);
 	outputColor.a = 1.0;
 
 	return outputColor;
@@ -261,23 +275,13 @@ vec4 NRISViewFiltering(vec2 tile_uv, vec3 views, int n)
 
 vec3 ViewDimming(vec3 views)
 {
-	float fadeStart1 = filter_end;
 	float fadeEnd1 = filter_end + filter_size;
-	float fullColorEnd = 1.0 - (filter_end + filter_size);
+	float fullColorEnd = 1.0 - fadeEnd1;
 	float fadeEnd2 = 1.0 - filter_end;
 
-	vec3 lowerDim = smoothstep(0.0, fadeStart1, views);
-	vec3 fadeDim1 = smoothstep(fadeStart1, fadeEnd1, views);
-	vec3 dimValues = mix(vec3(0.0), lowerDim, fadeDim1);
-
-	vec3 upperDim = smoothstep(1.0, fadeEnd2, views);
-	vec3 fadeDim2 = smoothstep(fullColorEnd, fadeEnd2, views);
-	dimValues = mix(dimValues, upperDim, fadeDim2);
-
-	vec3 fullColorDim = smoothstep(fadeEnd1, fullColorEnd, views);
-	dimValues = mix(dimValues, vec3(1.0), fullColorDim);
-
-	return dimValues;
+	vec3 lowerFade = smoothstep(filter_end, fadeEnd1, views);
+	vec3 upperFade = vec3(1.0) - smoothstep(fullColorEnd, fadeEnd2, views);
+	return min(lowerFade, upperFade);
 }
 
 float CalculateEdgeFade(vec2 tile_uv)
