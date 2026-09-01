@@ -56,12 +56,12 @@ export default class LookingGlassXRDevice extends XRDevice {
     if (session.immersive) {
       cfg.XRSession = this.sessions.get(sessionId)
       //create the window and pass in the session reference
-      if (cfg.popup == null) {
+      if (cfg.outputMode === "popup" && cfg.popup == null) {
         baseLayerPrivate.moveCanvasToWindow(true, () => {
           this.endSession(sessionId);
         });
       }
-      else {
+      else if (cfg.outputMode === "popup") {
         console.warn('attempted to assign baselayer twice?')
       }
 
@@ -96,7 +96,7 @@ export default class LookingGlassXRDevice extends XRDevice {
     if (immersive) {
       this.dispatchEvent('@@webxr-polyfill/vr-present-start', session.id);
 
-      window.addEventListener("unload", () => {
+      if (cfg.outputMode === "popup") window.addEventListener("unload", () => {
         if (cfg.popup) cfg.popup.close()
         cfg.popup = null
       })
@@ -200,7 +200,7 @@ export default class LookingGlassXRDevice extends XRDevice {
     // close the window and destroy the controls on the end of session
     
     if (session.immersive && session.baseLayer) {
-      session.baseLayer[LookingGlassXRWebGLLayer_PRIVATE].moveCanvasToWindow(false);
+      if (cfg.outputMode === "popup") session.baseLayer[LookingGlassXRWebGLLayer_PRIVATE].moveCanvasToWindow(false);
       session.baseLayer[LookingGlassXRWebGLLayer_PRIVATE].LookingGlassEnabled = false;
       session.baseLayer[LookingGlassXRWebGLLayer_PRIVATE].restoreOriginalCanvasDimensions();
       this.dispatchEvent('@@webxr-polyfill/vr-present-end', sessionId);

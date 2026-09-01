@@ -30,13 +30,14 @@ export default class LookingGlassXRWebGLLayer extends XRWebGLLayer {
 		const cfg = getLookingGlassConfig()
 		// create a reference to the existing canvas
 		cfg.appCanvas = gl.canvas as HTMLCanvasElement
-		// create a new canvas element to be used later when we open the Looking Glass window
-		cfg.lkgCanvas = document.createElement("canvas")
-		cfg.lkgCanvas.tabIndex = 0
-		const lkgCtx = cfg.lkgCanvas.getContext("2d", { alpha: false })
-		cfg.lkgCanvas.addEventListener("dblclick", function () {
-			this.requestFullscreen()
-		})
+		// Inline mode creates no second canvas; appCanvas is the output surface.
+		let lkgCtx: CanvasRenderingContext2D | null = null
+		if (cfg.outputMode === "popup") {
+			cfg.lkgCanvas = document.createElement("canvas")
+			cfg.lkgCanvas.tabIndex = 0
+			lkgCtx = cfg.lkgCanvas.getContext("2d", { alpha: false })
+			cfg.lkgCanvas.addEventListener("dblclick", function () { this.requestFullscreen() })
+		}
 
 		// Set up framebuffer/texture.
 
@@ -259,12 +260,14 @@ export default class LookingGlassXRWebGLLayer extends XRWebGLLayer {
 					gl.uniform1i(u_viewType, 0)
 					gl.drawArrays(gl.TRIANGLES, 0, 6)
 
-					// Copy it into the canvas that's actually on the display
-					lkgCtx?.clearRect(0, 0, cfg.calibration.screenW.value, cfg.calibration.screenH.value)
-					lkgCtx?.drawImage(appCanvas, 0, 0)
+					// Inline leaves the swizzled pass in appCanvas; popup retains its copy.
+					if (cfg.outputMode === "popup") {
+						lkgCtx?.clearRect(0, 0, cfg.calibration.screenW.value, cfg.calibration.screenH.value)
+						lkgCtx?.drawImage(appCanvas, 0, 0)
+					}
 
 					// And optionally render over with a "nicer" inline view
-					if (cfg.inlineView !== 0) {
+					if (cfg.outputMode === "popup" && cfg.inlineView !== 0) {
 						gl.uniform1i(u_viewType, cfg.inlineView)
 						gl.drawArrays(gl.TRIANGLES, 0, 6)
 					}

@@ -31,6 +31,36 @@ type SubpixelCell = {
 	ROffsetY: number
 }
 
+/** Supplies calibration without tying rendering to a particular transport. */
+export interface CalibrationProvider {
+	getCalibration(): Promise<Partial<CalibrationArgs>>
+}
+
+/** Uses calibration bundled by the host application (for example visual.json). */
+export class StaticCalibrationProvider implements CalibrationProvider {
+	constructor(private readonly staticCalibration: Partial<CalibrationArgs>) {}
+
+	async getCalibration(): Promise<Partial<CalibrationArgs>> {
+		return this.staticCalibration
+	}
+}
+
+/** The legacy Looking Glass Bridge calibration transport. */
+export class BridgeCalibrationProvider implements CalibrationProvider {
+	async getCalibration(): Promise<Partial<CalibrationArgs>> {
+		return new Promise((resolve) => {
+			new HoloPlayCore.Client((msg) => {
+				if (msg.devices.length < 1) {
+					console.log("No Looking Glass devices found")
+					return
+				}
+				if (msg.devices.length > 1) console.log("More than one Looking Glass device found... using the first one")
+				resolve(msg.devices[0].calibration)
+			})
+		})
+	}
+}
+
 export type CalibrationArgs = {
 	configVersion: string
 	pitch: Value
@@ -164,6 +194,13 @@ export type ViewControlArgs = {
 	filterMode: number
 	/**gaussian sigma */
 	gaussianSigma: number
+	outputMode: "popup" | "inline"
+}
+
+export type LookingGlassPolyfillOptions = Partial<ViewControlArgs> & {
+	calibration?: Partial<CalibrationArgs>
+	calibrationProvider?: CalibrationProvider
+	useBridge?: boolean
 }
 
 type LookingGlassConfigEvent = "on-config-changed"
@@ -213,26 +250,23 @@ export class LookingGlassConfig extends EventTarget {
 		subpixelMode: 1.0,
 		filterMode: 1,
 		gaussianSigma: 0.01,
+		outputMode: "popup",
 	}
 	LookingGlassDetected: any
 
 	constructor(cfg?: Partial<ViewControlArgs>) {
 		super()
 		this._viewControls = { ...this._viewControls, ...cfg }
-		this.syncCalibration()
 	}
 
-	private syncCalibration() {
-		const client = new HoloPlayCore.Client((msg) => {
-			if (msg.devices.length < 1) {
-				console.log("No Looking Glass devices found")
-				return
-			}
-			if (msg.devices.length > 1) {
-				console.log("More than one Looking Glass device found... using the first one")
-			}
-			this.calibration = msg.devices[0].calibration
-		})
+	/** Start calibration only after explicit polyfill options are known. */
+	public initializeCalibration(options: LookingGlassPolyfillOptions = {}) {
+		if (options.calibration) {
+			this.calibration = options.calibration
+			return
+		}
+		const provider = options.calibrationProvider ?? (options.useBridge === false ? null : new BridgeCalibrationProvider())
+		if (provider) void provider.getCalibration().then((calibration) => { this.calibration = calibration })
 	}
 
 	public addEventListener(
@@ -461,6 +495,9 @@ export class LookingGlassConfig extends EventTarget {
 	set gaussianSigma(v) {
 		this.updateViewControls({ gaussianSigma: v })
 	}
+
+	get outputMode() { return this._viewControls.outputMode }
+	set outputMode(v: "popup" | "inline") { this.updateViewControls({ outputMode: v }) }
 
 	get popup() {
 		return this._viewControls.popup
